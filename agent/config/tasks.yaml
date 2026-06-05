@@ -1,0 +1,86 @@
+# Definição das tarefas (padrão CrewAI).
+# As chaves {entre_chaves} são substituídas em tempo de execução com os dados
+# do evento (detecção da CNN, mensagem de vítima ou alocação decidida).
+
+briefing_missao:
+  description: >
+    Você é o navegador tático da unidade "{recurso}". O centro de comando atribuiu a
+    seguinte missão:
+    - Destino: {local}
+    - Tipo de ocorrência: {tipo}
+    - Prioridade: {prioridade} (4 = máxima)
+    - Detalhe: {detalhe}
+
+    Responda APENAS com a ORDEM (sem saudação, sem preâmbulo e sem comentar o seu
+    papel). Em português, no máximo 4 linhas: uma frase de deslocamento (para onde ir e
+    com que urgência) e 1 a 2 cuidados prioritários na chegada. Seja direto e prático.
+    Use só os dados fornecidos: não invente locais, ruas, horários ou estruturas.
+  expected_output: >
+    Uma ordem de missão de até 4 linhas: deslocamento + cuidados prioritários.
+  agent: navegador_tatico
+
+briefing_situacao:
+  description: >
+    Você é o coordenador de monitoramento da Defesa Civil. Abaixo está o QUADRO DE
+    SITUAÇÃO consolidado (enchentes detectadas pelos drones e pedidos de vítimas da
+    triagem), já ordenado por prioridade:
+
+    {situacao}
+
+    Responda APENAS com o briefing (sem preâmbulo nem comentários). Redija um SITREP
+    curto e legível para a sala de comando, em português, com no máximo 8 linhas:
+    - um panorama geral (quantas demandas/áreas há na lista e a gravidade predominante);
+    - os 2 a 3 pontos mais críticos da lista e por quê;
+    - alertas relevantes (ex.: vítimas em risco iminente).
+    NÃO decida a alocação de recursos (isso é do planejador). Use EXCLUSIVAMENTE os
+    locais e dados listados acima: não invente outros locais, horários, números de
+    pessoas, nem fenômenos (deslizamento, rompimento, edifícios, etc.) que não estejam
+    na lista.
+  expected_output: >
+    Um briefing de situação de até 8 linhas: panorama geral, pontos mais críticos e
+    alertas relevantes, sem decidir alocação de recursos.
+  agent: coordenador_emergencia
+
+planejar_demandas:
+  description: >
+    Você é o planejador central de uma operação de resgate em enchente. A alocação de
+    recursos JÁ FOI DECIDIDA pelo sistema (respeitando o estoque disponível). Sua função
+    é APENAS explicá-la e justificá-la para a sala de comando. Você NÃO deve propor outra
+    alocação, nem inventar recursos, locais, vítimas, horários ou detalhes.
+
+    ALOCAÇÃO DECIDIDA (recurso -> destino):
+    {alocacao}
+
+    Responda APENAS com o plano (sem preâmbulo nem comentários). Em português, máx.
+    10 linhas:
+    1. A ordem de prioridade de atendimento (da maior para a menor).
+    2. Uma justificativa curta para cada unidade efetivamente alocada.
+    3. Lacunas: cite SOMENTE se houver alguma linha marcada como "SEM RECURSO
+       DISPONÍVEL" acima. Se NÃO houver nenhuma, escreva exatamente "Sem lacunas:
+       todas as demandas foram atendidas." e não invente lacunas.
+    Use SOMENTE os dados listados. Não acrescente locais, vítimas, prioridades,
+    horários, fenômenos ou recursos que não estejam acima.
+  expected_output: >
+    Uma explicação curta e fiel à alocação decidida: ordem de prioridade, justificativa
+    por unidade e observação sobre lacunas. Sem propor nova alocação nem inventar dados.
+  agent: planejador_logistico
+
+triar_mensagem:
+  description: >
+    Você recebeu a seguinte mensagem de um possível afetado por enchente
+    (pode vir de WhatsApp, SMS ou rede social, com erros e desorganizada):
+
+    "{mensagem}"
+
+    Extraia as informações de socorro. Regras:
+    - Não invente nada: o que não estiver na mensagem use "não informado"
+      (ou 0 para número de pessoas).
+    - urgencia deve ser um destes: baixa, media, alta, critica
+      (critica = risco iminente de morte: pessoas presas, idosos/crianças/doentes,
+       água subindo rápido).
+    - necessidade é o tipo de ajuda principal (ex.: resgate, evacuação,
+      mantimentos, atendimento médico).
+  expected_output: >
+    Os campos estruturados: local, pessoas (número), necessidade, urgencia e um
+    resumo de uma frase.
+  agent: triador_vitimas
