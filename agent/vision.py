@@ -14,6 +14,8 @@ import numpy as np
 import tensorflow as tf
 import keras
 
+from .settings import THRESHOLD
+
 # Caminho do modelo salvo pelo notebook (Parte 1).
 MODEL_PATH = os.environ.get(
     "FLOOD_MODEL_PATH",
@@ -67,7 +69,7 @@ def _load_image(path: str) -> tf.Tensor:
     return tf.expand_dims(img, 0)
 
 
-def classify_image(image_path: str, threshold: float = 0.5) -> FloodResult:
+def classify_image(image_path: str, threshold: float = THRESHOLD) -> FloodResult:
     """Classifica uma imagem; retorna probabilidade, decisão e severidade."""
     model = _load_model()
     x = _load_image(image_path)
@@ -80,7 +82,7 @@ def classify_image(image_path: str, threshold: float = 0.5) -> FloodResult:
     )
 
 
-def classify_folder(folder: str, threshold: float = 0.5) -> list[FloodResult]:
+def classify_folder(folder: str, threshold: float = THRESHOLD) -> list[FloodResult]:
     """Classifica todas as imagens de uma pasta (simula uma 'estação')."""
     exts = (".png", ".jpg", ".jpeg")
     results = []

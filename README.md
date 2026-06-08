@@ -6,9 +6,10 @@ e ordens de resgate.
 
 - **Parte 1** — `model_train.ipynb`: treina e avalia um classificador de enchente com
   **MobileNetV2** (transfer learning) e compara com o **Xception** usado em aula.
-- **Parte 2** — pasta `agent/` + `app.py`: agentes de monitoramento com **CrewAI** +
-  **Ollama** (LLM local). A CNN faz a detecção; os agentes LLM transformam os eventos
-  em um boletim operacional para a Defesa Civil.
+- **Parte 2** — pasta `agent/` + `app.py`: agentes de monitoramento com **CrewAI** e um
+  **servidor LLM** (LiteLLM — Ollama por padrão, mas qualquer provedor). A CNN faz a
+  detecção; os agentes LLM transformam os eventos em um boletim operacional para a
+  Defesa Civil.
 
 Dataset: [Louisiana Flood 2016 (Kaggle)](https://www.kaggle.com/datasets/rahultp97/louisiana-flood-2016).
 
@@ -26,9 +27,10 @@ pip install -r requirements.txt
 > `protobuf==6.33.6`, com o qual **TF e CrewAI coexistem**. Se reinstalar o crewai,
 > rode depois: `pip install "protobuf>=6.31,<7"`.
 
-Para a Parte 2 também é preciso o [Ollama](https://ollama.com) rodando localmente
-com um modelo de **texto**. Configure o nome em `agent/settings.py` (`OLLAMA_MODEL`)
-ou via env var. Ex.: `ollama pull llama3.1`.
+A Parte 2 precisa de um **servidor LLM**. O padrão é o [Ollama](https://ollama.com)
+local com um modelo de **texto** (ex.: `ollama pull llama3.1`), mas qualquer provedor
+suportado pelo LiteLLM serve (OpenAI, Anthropic, ...). Configure provedor, modelo,
+servidor e API key em `agent/settings.py`, por env var, ou na aba **Configurações** do app.
 
 ---
 
@@ -47,6 +49,10 @@ precision/recall/F1, matriz de confusão e latência) e **salva** o modelo em
 normalização do MobileNetV2 ([-1,1]) ficam embutidas como camadas — na inferência
 basta passar a imagem redimensionada em [0,255].
 
+Treina-se só a cabeça binária (extração de features, base congelada): para 270 imagens
+de treino, fine-tunar os 2,2 M parâmetros da base arriscaria overfitting, então não há
+fase de fine-tuning.
+
 ### Resultados (MobileNetV2 vs. Xception de aula)
 
 Mesmo dataset (270 treino / 52 teste), execução local em CPU:
@@ -59,6 +65,10 @@ Mesmo dataset (270 treino / 52 teste), execução local em CPU:
 | Latência de inferência/imagem| **~40 ms** (~25 img/s)          | bem maior (modelo pesado)   |
 | F1 classe "enchente"         | ~0,78                           | —                           |
 
+> **Nota:** os números do Xception são os do notebook de aula (não re-treinado aqui).
+> A comparação não é estritamente controlada: o Xception roda em 512×360, sem
+> augmentation nem `class_weight`; este MobileNetV2 usa 224×224 com os dois.
+
 **Conclusão da comparação:** o MobileNetV2 troca alguns pontos de acurácia por ser
 **~10× mais leve** e bem mais rápido — perfil ideal para o agente de monitoramento
 reativo (drones/edge), onde latência e custo computacional importam. O conjunto de
@@ -66,11 +76,14 @@ teste é pequeno (52 imagens), então ~1–2 pontos de acurácia são ruído est
 
 ---
 
-## 3. Parte 2 — Agentes de monitoramento (CrewAI + Ollama)
+## 3. Parte 2 — Agentes de monitoramento (CrewAI + servidor LLM)
 
 ```bash
 python app.py
 ```
+
+Os exemplos das estações (`estacoes/`) já vêm versionados; para regenerá-los a partir
+do dataset, rode `python -m agent.setup_stations`.
 
 A interface web (Gradio) tem cinco abas, organizadas pela arquitetura
 **fontes de evento (borda) × centro de comando**:
@@ -93,8 +106,9 @@ A interface web (Gradio) tem cinco abas, organizadas pela arquitetura
   de ambiente (`OPENAI_API_KEY`...). A listagem automática de modelos só funciona com
   Ollama. A CNN de detecção não depende dessa configuração.
 
-Se o Ollama estiver indisponível, os agentes caem para versões **por regras**
-(determinísticas) e a demo não quebra.
+Sem servidor LLM, o Planejador, o Monitoramento e o Navegador caem para versões
+**por regras** (determinísticas) e a demo não quebra; a **Triagem**, que depende de
+extração de texto livre, fica **indisponível**.
 
 ### Arquitetura
 
@@ -110,8 +124,8 @@ Se o Ollama estiver indisponível, os agentes caem para versões **por regras**
 Na ponta (drone) só faz sentido a **CNN leve** (banda, latência, conectividade
 intermitente); o **LLM** é caro/lento por frame e pertence ao **centro de comando**,
 acionado **por evento** e de forma agregada. A alocação de recursos é
-**determinística** (respeita o estoque) e o LLM apenas **narra/justifica** a decisão,
-nunca a re-decide.
+**determinística** (respeita o estoque e escolhe o recurso conforme o tipo de demanda)
+e o LLM apenas **narra/justifica** a decisão, nunca a re-decide.
 
 ### Os agentes
 
@@ -120,4 +134,17 @@ nunca a re-decide.
 | **Monitoramento** | Reativo | Detecta enchente (CNN) e redige o briefing da situação | ✅ Implementado |
 | **Triagem** | Reativo | Extrai de uma mensagem crua um pedido estruturado `{local, pessoas, necessidade, urgência}` | ✅ Implementado |
 | **Planejador** | Deliberativo | Justifica a alocação de recursos sobre as demandas priorizadas | ✅ Implementado |
-| **Navegador** | Deliberativo | Redige a ordem tática por unidade; **sem engine de rotas** | 🟡 Mock 
+| **Navegador** | Deliberativo | Redige a ordem tática por unidade; **sem engine de rotas** | 🟡 Mock |
+
+### Testes do agente
+
+`test_agente.ipynb` registra uma execução ponta-a-ponta dos quatro agentes (triagem,
+detecção da CNN, plano, briefing e ordem tática). Defina provedor, modelo e servidor LLM
+nas variáveis do topo do notebook e execute para capturar as saídas:
+
+```bash
+jupyter nbconvert --to notebook --execute --inplace test_agente.ipynb
+```
+
+> **Nota (limitação):** o quadro de situação e a frota são estado em memória
+> compartilhado pelo processo — a demo é single-session (abas/usuários veem o mesmo quadro).

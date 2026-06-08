@@ -13,7 +13,9 @@ Consumido pela interface web (app.py) e pelo quadro de situação (agent/situati
 """
 from __future__ import annotations
 
+import asyncio
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import yaml
 from pydantic import BaseModel, Field
@@ -105,14 +107,6 @@ def build_recursos(**kwargs: int) -> list[dict]:
     ]
 
 
-def _pool_recursos(recursos: list[dict]) -> list[str]:
-    """Expande [{'tipo':'Bote','qtd':2}] em ['Bote', 'Bote', ...]."""
-    pool = []
-    for r in recursos:
-        pool += [r["tipo"]] * int(r["qtd"])
-    return pool
-
-
 # --------------------------------------------------------------------------- #
 # LLM (servidor + modelo) — configurável em runtime (ex.: pela interface)
 # --------------------------------------------------------------------------- #
@@ -191,28 +185,37 @@ def _build_navegador_agent(llm: LLM | str | None = None) -> Agent:
     return _build_agent("navegador_tatico", llm)
 
 
+def _kickoff(agent: Agent, *args, **kwargs):
+    """Executa agent.kickoff; com event loop ativo (ex.: notebook) ele devolve uma
+    coroutine, então a resolvemos para o resultado."""
+    out = agent.kickoff(*args, **kwargs)
+    if not asyncio.iscoroutine(out):
+        return out
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(out)
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        return ex.submit(asyncio.run, out).result()
+
+
 # --------------------------------------------------------------------------- #
 # Agente de Triagem: extrai pedidos de socorro de mensagens cruas
 # --------------------------------------------------------------------------- #
 _URGENCIAS = {"baixa", "media", "alta", "critica"}
 
 
-def triar_mensagem(mensagem: str, agent: Agent | None = None) -> RelatoVitima:
-    """Agente de Triagem: extrai um RelatoVitima estruturado de uma mensagem crua.
-
-    A extração de texto livre exige LLM; se ele falhar, devolve um relato mínimo
-    com a mensagem como resumo (degradação controlada).
-    """
+def triar_mensagem(mensagem: str, agent: Agent | None = None) -> RelatoVitima | None:
+    """Agente de Triagem: extrai um RelatoVitima estruturado de uma mensagem crua."""
     mensagem = (mensagem or "").strip()
     if not mensagem:
         return RelatoVitima(resumo="(mensagem vazia)")
     agent = agent or _build_triage_agent()
     prompt = TASKS_CFG["triar_mensagem"]["description"].format(mensagem=mensagem)
     try:
-        relato = agent.kickoff(prompt, response_format=RelatoVitima).pydantic
+        relato = _kickoff(agent, prompt, response_format=RelatoVitima).pydantic
         if relato.urgencia not in _URGENCIAS:
             relato.urgencia = "media"
         return relato
-    except Exception as e:
-        print(f"  (LLM indisponível para a triagem: {e}; relato degradado)")
-        return RelatoVitima(resumo=mensagem[:140], urgencia="media")
+    except Exception:
+        return None

@@ -21,7 +21,7 @@ from .settings import RECURSOS
 from .monitoring_flow import (
     RelatoVitima,
     make_llm, _build_planner_agent, _build_alert_agent, _build_navegador_agent,
-    _pool_recursos, _SEV_RANK, TASKS_CFG,
+    _kickoff, _SEV_RANK, TASKS_CFG,
 )
 
 # Ranking de urgência das vítimas (alinhado ao de severidade das enchentes).
@@ -141,8 +141,8 @@ class Frota:
         oc = self.ocupados()
         return [{"tipo": t, "qtd": max(0, tot - oc.get(t, 0))} for t, tot in self.total.items()]
 
-    def locais_ativos(self) -> set[str]:
-        return {m.local for m in self.ativas}
+    def chaves_ativas(self) -> set[tuple[str, str]]:
+        return {(m.local, m.tipo) for m in self.ativas}
 
     def adicionar(self, recurso: str, demanda: Demanda):
         self.ativas.append(MissaoAtiva(
@@ -178,7 +178,7 @@ def briefing_da_missao(m: MissaoAtiva, agent=None) -> str:
     )
     agent = agent or _build_navegador_agent()
     try:
-        return agent.kickoff(prompt).raw.strip()
+        return _kickoff(agent, prompt).raw.strip()
     except Exception as e:
         print(f"  (LLM indisponível para o navegador: {e}; ordem por regras)")
         return (f"Ordem (regras): {m.recurso}, dirija-se a {m.local} "
@@ -211,13 +211,27 @@ def frota_md(frota: Frota = FROTA) -> str:
 # --------------------------------------------------------------------------- #
 # Alocação determinística sobre as demandas (respeita o estoque)
 # --------------------------------------------------------------------------- #
+# Preferência de recurso por tipo de demanda (cai para qualquer disponível).
+_PREF_RECURSO = {
+    "vitima": ["Helicóptero", "Bote", "Equipe terrestre"],
+    "enchente": ["Bote", "Equipe terrestre", "Helicóptero"],
+}
+
+
 def _alocar_demandas(demandas: list[Demanda], recursos: list[dict]):
-    pool = _pool_recursos(recursos)
-    aloc, i = [], 0
+    disp = {r["tipo"]: int(r["qtd"]) for r in recursos}
+    aloc = []
     for d in demandas:                       # já ordenadas por prioridade
         n = 2 if d.prioridade >= 3 else 1    # alta/crítica/alto -> 2; média/medio -> 1
-        atribuidos = pool[i:i + n]
-        i += len(atribuidos)
+        pref = _PREF_RECURSO.get(d.tipo, [])
+        ordem = pref + [t for t in disp if t not in pref]
+        atribuidos = []
+        for _ in range(n):
+            escolha = next((t for t in ordem if disp.get(t, 0) > 0), None)
+            if escolha is None:
+                break
+            disp[escolha] -= 1
+            atribuidos.append(escolha)
         aloc.append((d, atribuidos))
     return aloc
 
@@ -260,7 +274,7 @@ def planejar_demandas(aloc, agent=None) -> str:
     )
     agent = agent or _build_planner_agent()
     try:
-        return agent.kickoff(prompt).raw.strip()
+        return _kickoff(agent, prompt).raw.strip()
     except Exception as e:
         print(f"  (LLM indisponível para o planejador: {e}; usando regras)")
         return _plano_regras_aloc(aloc)
@@ -291,7 +305,7 @@ def gerar_briefing(demandas: list[Demanda], agent=None) -> str:
     prompt = TASKS_CFG["briefing_situacao"]["description"].format(situacao=situacao)
     agent = agent or _build_alert_agent()
     try:
-        return agent.kickoff(prompt).raw.strip()
+        return _kickoff(agent, prompt).raw.strip()
     except Exception as e:
         print(f"  (LLM indisponível para o briefing: {e}; usando regras)")
         return _briefing_regras(demandas)

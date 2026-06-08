@@ -150,6 +150,9 @@ def triar(mensagem, provider, server_url, model, api_key):
         provider=provider or LLM_PROVIDER, api_key=(api_key or "").strip() or None,
     )
     r = triar_mensagem(mensagem, _build_triage_agent(llm))
+    if r is None:
+        yield "Triagem indisponível: nenhum servidor LLM disponível."
+        return
     QUADRO.publicar_vitima(r)   # publica no quadro de situação (consumido pelo centro)
     nota = ("\n\n_Adicionado ao quadro de situação (aba Centro de Comando)._"
             if r.urgencia != "baixa"
@@ -175,8 +178,9 @@ def planejar_centro(heli, bote, equipe, provider, server_url, model, api_key, eq
     unidades livres às demandas ainda não atendidas (despacha = consome)."""
     FROTA.definir_total(build_recursos(Helicóptero=heli, Bote=bote, Equipe_terrestre=equipe))
     picture = resumo_md(QUADRO)
-    # Demandas pendentes = ainda sem unidade despachada para o local.
-    pendentes = [d for d in QUADRO.demandas() if d.local not in FROTA.locais_ativos()]
+    # Demandas pendentes = ainda sem unidade despachada (por local e tipo).
+    ativas = FROTA.chaves_ativas()
+    pendentes = [d for d in QUADRO.demandas() if (d.local, d.tipo) not in ativas]
     if not pendentes:
         return (picture, "Sem novas demandas a atender (quadro vazio ou todas já "
                 "têm unidade despachada).", frota_md(FROTA), eq_ver + 1)
@@ -242,7 +246,7 @@ with gr.Blocks(title="Monitoramento de Enchentes") as demo:
     gr.Markdown(
         "# Sistema de Monitoramento de Enchentes\n"
         "**Borda (drone):** a CNN **MobileNetV2** detecta enchente na ponta e emite "
-        "eventos. **Centro de comando:** os agentes **CrewAI + Ollama** (Monitoramento "
+        "eventos. **Centro de comando:** os agentes **CrewAI + LLM** (Monitoramento "
         "e Planejador) são acionados por evento e geram alertas + plano de resgate."
     )
 
