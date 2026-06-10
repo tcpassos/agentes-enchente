@@ -1,19 +1,19 @@
-"""Interface web do sistema de monitoramento de enchentes — Gradio.
+"""Interface web do sistema de monitoramento de enchentes, feita com Gradio.
 
 Uso:
     python app.py
 
 Abas:
-  1. "Sensor / Drone (borda)" — upload de UMA imagem -> detecção da CNN e publicação
-                                do evento no quadro de situação.
-  2. "Triagem (mensagens)"    — extrai um pedido de socorro estruturado de uma mensagem
-                                crua (agente de Triagem).
-  3. "Centro de Comando"      — define a frota, planeja a alocação (Planejador) e gera
-                                o briefing da situação (Monitoramento).
-  4. "Equipes ativas"         — gera a ordem tática de cada missão (Navegador) e conclui.
-  5. "Configurações"          — escolhe o provedor, o servidor LLM e o modelo dos agentes.
+  1. Sensor / Drone (borda): sobe uma imagem, a CNN detecta e publica o evento
+     no quadro de situação.
+  2. Triagem (mensagens): extrai um pedido de socorro estruturado de uma
+     mensagem crua, pelo agente de Triagem.
+  3. Centro de Comando: define a frota, planeja a alocação com o Planejador e
+     gera o resumo da situação com o Monitoramento.
+  4. Equipes ativas: gera a ordem tática de cada missão com o Navegador e conclui.
+  5. Configurações: escolhe o provedor, o servidor LLM e o modelo dos agentes.
 
-Pré-requisitos: modelo flood_mobilenetv2.keras (Parte 1) e Ollama em execução.
+Antes de rodar, precisa do modelo flood_mobilenetv2.keras da Parte 1 e do Ollama ligado.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ import sys
 import json
 from datetime import datetime
 
-# Console/Tracing: UTF-8 e telemetria desligada.
+# Saída em UTF-8 e telemetria desligada.
 for _s in (sys.stdout, sys.stderr):
     try:
         _s.reconfigure(encoding="utf-8")
@@ -51,16 +51,16 @@ _DEFAULT_RES = {r["tipo"]: r["qtd"] for r in RECURSOS}
 
 
 # --------------------------------------------------------------------------- #
-# Configurações de LLM (servidor + modelo) vindas da aba "Configurações"
+# Configurações de LLM vindas da aba Configurações
 # --------------------------------------------------------------------------- #
 def _agentes_llm(server_url, model, provider, api_key):
-    """Constrói (alert_agent, planner_agent) com o provedor/servidor/modelo escolhidos.
+    """Monta o agente de alerta e o de planejamento com o provedor, servidor e modelo escolhidos.
 
-    server_url vazio => endpoint padrão do provedor; api_key vazio => key do ambiente.
+    server_url vazio usa o endpoint padrão do provedor. api_key vazio usa a chave do ambiente.
     """
     llm = make_llm(
         model=model or OLLAMA_MODEL,
-        base_url=(server_url or "").strip(),   # "" = endpoint padrão do provedor
+        base_url=(server_url or "").strip(),   # vazio usa o endpoint padrão do provedor
         provider=provider or LLM_PROVIDER,
         api_key=(api_key or "").strip() or None,
     )
@@ -68,7 +68,7 @@ def _agentes_llm(server_url, model, provider, api_key):
 
 
 def ajustar_url_por_provedor(provider):
-    """Ao trocar de provedor: Ollama usa a URL local; demais usam endpoint padrão (vazio)."""
+    """Ao trocar de provedor, o Ollama usa a URL local e os outros usam o endpoint padrão."""
     return OLLAMA_BASE_URL if (provider or "").lower() == "ollama" else ""
 
 
@@ -80,14 +80,14 @@ def testar_conexao(server_url, model, provider):
     if not modelos:
         return f"Falha ao acessar o servidor em {server_url}. Ele está rodando?"
     if model in modelos:
-        return f"Conectado a {server_url} — {len(modelos)} modelo(s). Modelo '{model}' OK."
-    return (f"Conectado a {server_url} — {len(modelos)} modelo(s). "
+        return f"Conectado a {server_url}, {len(modelos)} modelo(s). Modelo '{model}' OK."
+    return (f"Conectado a {server_url}, {len(modelos)} modelo(s). "
             f"Atenção: modelo '{model}' não está na lista.")
 
 
 def atualizar_modelos(server_url, provider, modelo_atual):
-    # A listagem automática (/api/tags) só existe no Ollama. Para outros provedores,
-    # limpa a lista e mantém o que estiver digitado (o campo aceita texto livre).
+    # A listagem automática só existe no Ollama. Para outros provedores,
+    # limpa a lista e mantém o que estiver digitado.
     if (provider or "").lower() != "ollama":
         return gr.update(choices=[], value=modelo_atual)
     modelos = listar_modelos(server_url)
@@ -101,7 +101,7 @@ def atualizar_modelos(server_url, provider, modelo_atual):
 
 
 # --------------------------------------------------------------------------- #
-# Sensor / Drone (borda): SÓ a CNN. Emite um evento (sem LLM).
+# Sensor / Drone (borda): só a CNN. Emite um evento, sem LLM.
 # --------------------------------------------------------------------------- #
 def detectar_imagem(imagem_path, local):
     if not imagem_path:
@@ -115,7 +115,7 @@ def detectar_imagem(imagem_path, local):
         f"- **Severidade:** {rep.severity.upper()}\n"
         f"- **Local:** {rep.station}"
     )
-    # Evento que o drone PUBLICA no barramento/quadro de situação (só com ocorrência).
+    # Evento que o drone publica no quadro de situação, só quando há ocorrência.
     if r.flooded:
         QUADRO.publicar_deteccao(rep.station, r.probability, rep.severity)
         evento = {
@@ -133,13 +133,13 @@ def detectar_imagem(imagem_path, local):
 
 
 # --------------------------------------------------------------------------- #
-# Triagem + Centro de Comando (Monitoramento + Planejador)
+# Triagem e Centro de Comando (Monitoramento e Planejador)
 # --------------------------------------------------------------------------- #
 def triar(mensagem, provider, server_url, model, api_key):
-    """Aba Triagem: o agente LLM extrai um pedido de socorro estruturado da mensagem.
+    """Aba Triagem: o agente de LLM extrai um pedido de socorro estruturado da mensagem.
 
-    É um gerador: emite primeiro um aviso de "processando" para dar feedback visual,
-    depois o resultado.
+    É um gerador. Emite primeiro um aviso de processando, para dar retorno visual,
+    e depois o resultado.
     """
     if not (mensagem or "").strip():
         yield "Digite uma mensagem para triar."
@@ -153,7 +153,7 @@ def triar(mensagem, provider, server_url, model, api_key):
     if r is None:
         yield "Triagem indisponível: nenhum servidor LLM disponível."
         return
-    QUADRO.publicar_vitima(r)   # publica no quadro de situação (consumido pelo centro)
+    QUADRO.publicar_vitima(r)   # publica no quadro de situação, que o centro consome
     nota = ("\n\n_Adicionado ao quadro de situação (aba Centro de Comando)._"
             if r.urgencia != "baixa"
             else "\n\n_Urgência baixa: registrado, mas não vira demanda de resgate._")
@@ -169,16 +169,16 @@ def triar(mensagem, provider, server_url, model, api_key):
 
 def limpar_quadro(eq_ver):
     QUADRO.limpar()
-    FROTA.limpar()                 # reset completo (eventos + frota/missões)
+    FROTA.limpar()                 # reset completo, eventos e frota
     return resumo_md(QUADRO), frota_md(FROTA), eq_ver + 1
 
 
 def planejar_centro(heli, bote, equipe, provider, server_url, model, api_key, eq_ver):
-    """Centro de comando: CONSOME o quadro + a frota disponível. Aloca apenas as
-    unidades livres às demandas ainda não atendidas (despacha = consome)."""
+    """Centro de comando: lê o quadro e a frota disponível. Aloca apenas as unidades
+    livres às demandas ainda não atendidas, e despachar já consome a frota."""
     FROTA.definir_total(build_recursos(Helicóptero=heli, Bote=bote, Equipe_terrestre=equipe))
     picture = resumo_md(QUADRO)
-    # Demandas pendentes = ainda sem unidade despachada (por local e tipo).
+    # Demandas pendentes são as que ainda não têm unidade despachada, por local e tipo.
     ativas = FROTA.chaves_ativas()
     pendentes = [d for d in QUADRO.demandas() if (d.local, d.tipo) not in ativas]
     if not pendentes:
@@ -186,18 +186,18 @@ def planejar_centro(heli, bote, equipe, provider, server_url, model, api_key, eq
                 "têm unidade despachada).", frota_md(FROTA), eq_ver + 1)
 
     disponiveis = FROTA.disponiveis_lista()
-    # UMA decisão determinística, usada tanto no despacho quanto na narração do LLM,
-    # garantindo que o plano descrito = o que foi realmente despachado.
+    # Uma decisão determinística, usada tanto no despacho quanto na narração do LLM,
+    # garantindo que o plano descrito é o que foi realmente despachado.
     aloc = _alocar_demandas(pendentes, disponiveis)
     _, planner_agent = _agentes_llm(server_url, model, provider, api_key)
-    plano = planejar_demandas(aloc, planner_agent)       # LLM só justifica a alocação real
-    despachar_alocacao(aloc, FROTA)                       # cria as equipes a partir da MESMA alocação
+    plano = planejar_demandas(aloc, planner_agent)       # o LLM só justifica a alocação real
+    despachar_alocacao(aloc, FROTA)                       # cria as equipes a partir da mesma alocação
     return picture, plano, frota_md(FROTA), eq_ver + 1
 
 
 # --- Handlers por equipe (aba "Equipes ativas") ---
 def _gerar_ordem_equipe(mid):
-    """Fábrica: gera a ordem tática (Navegador) para a missão `mid`, sob demanda."""
+    """Fábrica: gera a ordem tática do Navegador para a missão mid, sob demanda."""
     def handler(provider, server_url, model, api_key):
         m = FROTA.por_id(mid)
         if m is None:
@@ -214,17 +214,17 @@ def _gerar_ordem_equipe(mid):
 def _concluir_equipe(mid):
     def handler(eq_ver):
         FROTA.concluir(mid)
-        return eq_ver + 1          # bump -> re-render da lista de equipes
+        return eq_ver + 1          # incrementa para re-renderizar a lista de equipes
     return handler
 
 
 def briefing_situacao(provider, server_url, model, api_key):
-    """Agente de Monitoramento sob demanda: gera UM briefing agregado do quadro."""
+    """Agente de Monitoramento sob demanda: gera um resumo agregado do quadro."""
     ds = QUADRO.demandas()
     if not ds:
-        yield "Quadro sem demandas — publique eventos primeiro."
+        yield "Quadro sem demandas, publique eventos primeiro."
         return
-    yield "_Gerando briefing da situação..._"
+    yield "_Gerando o resumo da situação..._"
     alert_agent, _ = _agentes_llm(server_url, model, provider, api_key)
     yield gerar_briefing(ds, alert_agent)
 
@@ -250,8 +250,8 @@ with gr.Blocks(title="Monitoramento de Enchentes") as demo:
         "e Planejador) são acionados por evento e geram alertas + plano de resgate."
     )
 
-    # Componentes de configuração: definidos uma vez (render=False) e posicionados
-    # depois, na aba "Configurações", mas referenciáveis pelos handlers de todas as abas.
+    # Componentes de configuração, definidos uma vez com render=False e posicionados
+    # depois na aba Configurações, mas acessíveis pelos handlers de todas as abas.
     provider_dd = gr.Dropdown(
         choices=["ollama", "openai", "anthropic", "azure", "gemini"],
         value=LLM_PROVIDER, label="Provedor (LiteLLM)",
@@ -333,7 +333,7 @@ with gr.Blocks(title="Monitoramento de Enchentes") as demo:
             "### Centro de Comando\n"
             "Consome o **quadro de situação** acumulado pelas fontes (Drone e Triagem). "
             "Defina a frota e planeje: o **Planejador** decide a alocação, o **Navegador** "
-            "despacha as equipes (aba *Equipes ativas*) e o **Monitoramento** redige o briefing."
+            "despacha as equipes (aba *Equipes ativas*) e o **Monitoramento** redige o resumo."
         )
         timer_quadro = gr.Timer(2.0)   # refresh automático do quadro e da frota
 
@@ -356,17 +356,17 @@ with gr.Blocks(title="Monitoramento de Enchentes") as demo:
                                    label="Equipes terrestres", precision=0, minimum=0)
             with gr.Row():
                 btn2 = gr.Button("Planejar e despachar", variant="primary")
-                btn_briefing = gr.Button("Gerar briefing da situação")
+                btn_briefing = gr.Button("Gerar resumo da situação")
                 btn_limpar = gr.Button("Limpar quadro", variant="secondary")
 
-        # Saídas: Plano (Planejador) e Briefing (Monitoramento), separados.
+        # Saídas: Plano (Planejador) e Resumo (Monitoramento), separados.
         with gr.Row(equal_height=True):
             with gr.Group():
-                gr.Markdown("#### Plano de alocação — Planejador")
+                gr.Markdown("#### Plano de alocação (Planejador)")
                 plano_out = gr.Markdown(value="_Clique em **Planejar e despachar**._")
             with gr.Group():
-                gr.Markdown("#### Briefing da situação — Monitoramento")
-                briefing_out = gr.Markdown(value="_Clique em **Gerar briefing da situação**._")
+                gr.Markdown("#### Resumo da situação (Monitoramento)")
+                briefing_out = gr.Markdown(value="_Clique em **Gerar resumo da situação**._")
 
         timer_quadro.tick(lambda: (resumo_md(), frota_md()), None, [quadro_out, frota_out])
         btn_limpar.click(limpar_quadro, [eq_refresh], [quadro_out, frota_out, eq_refresh])
@@ -384,7 +384,7 @@ with gr.Blocks(title="Monitoramento de Enchentes") as demo:
     with gr.Tab("Equipes ativas"):
         gr.Markdown(
             "Cada **equipe despachada** pelo Planejador aparece aqui. Gere a **ordem "
-            "tática** (agente Navegador) e marque **concluída** ao terminar — isso "
+            "tática** (agente Navegador) e marque **concluída** ao terminar, isso "
             "libera a unidade de volta para a frota."
         )
 
@@ -414,7 +414,7 @@ with gr.Blocks(title="Monitoramento de Enchentes") as demo:
             "Configure o **servidor LLM**, o **provedor** e o **modelo** usados pelos "
             "agentes. O padrão é Ollama local, mas o servidor não precisa ser Ollama "
             "(qualquer provedor suportado pelo LiteLLM). A CNN de detecção não depende disso.\n\n"
-            "A lista automática de modelos só funciona com Ollama; para outros "
+            "A lista automática de modelos só funciona com Ollama. Para outros "
             "provedores, digite o nome do modelo."
         )
         with gr.Row():
@@ -426,7 +426,7 @@ with gr.Blocks(title="Monitoramento de Enchentes") as demo:
         api_key_tb.render()
         btn_test = gr.Button("Testar conexão", variant="primary")
         status = gr.Markdown()
-        # Ao trocar de provedor, ajusta a URL (Ollama=local, demais=padrão do provedor).
+        # Ao trocar de provedor, ajusta a URL. Ollama usa local e os outros o padrão.
         provider_dd.change(ajustar_url_por_provedor, [provider_dd], [server_url])
         btn_refresh.click(atualizar_modelos, [server_url, provider_dd, model_dd], [model_dd])
         btn_test.click(testar_conexao, [server_url, model_dd, provider_dd], [status])

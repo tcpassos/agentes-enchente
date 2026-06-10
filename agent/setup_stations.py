@@ -1,12 +1,12 @@
-"""Monta pastas de 'estações' de monitoramento a partir do dataset de teste.
+"""Monta pastas de estações de monitoramento a partir do dataset de teste.
 
-Cada estação simula um local diferente recebendo imagens. Para uma demo
-interessante, distribuímos um mix de cenas com e sem enchente:
+Cada estação simula um local diferente recebendo imagens. Para a demo ficar
+variada, cada pasta recebe uma mistura de cenas com e sem enchente:
 
   estacoes/
-    Centro_Historico/      -> majoritariamente COM enchente (alerta alto)
-    Bairro_Navegantes/     -> mix (alerta médio)
-    Zona_Rural_Norte/      -> majoritariamente SEM enchente (situação normal)
+    Centro_Historico/      em geral com enchente, alerta alto
+    Bairro_Navegantes/     misto, alerta médio
+    Zona_Rural_Norte/      em geral sem enchente, situação normal
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import pandas as pd
 
 from .settings import STATIONS_DIR
 
-# Distribuição desejada por estação: (n_imagens_com_enchente, n_sem_enchente)
+# Quantas imagens por estação, no formato (com enchente, sem enchente).
 PLANO = {
     "Centro_Historico": (4, 1),
     "Bairro_Navegantes": (2, 2),

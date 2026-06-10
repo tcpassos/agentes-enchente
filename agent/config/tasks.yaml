@@ -1,6 +1,6 @@
-# Definição das tarefas (padrão CrewAI).
-# As chaves {entre_chaves} são substituídas em tempo de execução com os dados
-# do evento (detecção da CNN, mensagem de vítima ou alocação decidida).
+# Definição das tarefas, no padrão CrewAI.
+# As chaves {entre_chaves} são trocadas em tempo de execução pelos dados do
+# evento, como a detecção da CNN, a mensagem de vítima ou a alocação decidida.
 
 briefing_missao:
   description: >
@@ -27,8 +27,8 @@ briefing_situacao:
 
     {situacao}
 
-    Responda APENAS com o briefing (sem preâmbulo nem comentários). Redija um SITREP
-    curto e legível para a sala de comando, em português, com no máximo 8 linhas:
+    Responda APENAS com o resumo (sem preâmbulo nem comentários). Redija um resumo
+    da situação, curto e legível para a sala de comando, em português, com no máximo 8 linhas:
     - um panorama geral (quantas demandas/áreas há na lista e a gravidade predominante);
     - os 2 a 3 pontos mais críticos da lista e por quê;
     - alertas relevantes (ex.: vítimas em risco iminente).

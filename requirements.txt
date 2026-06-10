@@ -13,7 +13,7 @@ requests==2.34.2
 nbconvert==7.17.1
 ipykernel==6.17.1
 
-# Parte 2 - Agente de monitoramento (CrewAI + Ollama)
+# Parte 2 - Agente de monitoramento
 crewai==1.14.6
 crewai-tools==1.14.6
 
@@ -21,6 +21,6 @@ crewai-tools==1.14.6
 gradio==6.16.0
 pyyaml
 
-# IMPORTANTE: o CrewAI tende a rebaixar o protobuf e quebrar o TensorFlow.
-# Force a versão >= 6.31 para que TF e CrewAI coexistam no mesmo ambiente.
+# O CrewAI tende a rebaixar o protobuf e quebrar o TensorFlow.
+# Forçando a versão >= 6.31 parece que o TF e CrewAI conseguiram coesistir no mesmo ambiente.
 protobuf==6.33.6

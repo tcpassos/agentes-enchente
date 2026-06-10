@@ -1,14 +1,10 @@
-"""Quadro de situação (Common Operational Picture) do centro de comando.
+"""Quadro de situação do centro de comando.
 
-Event store EM MEMÓRIA: as fontes (drones, triagem) PUBLICAM eventos que se
-acumulam aqui; o centro de comando CONSOME o quadro para planejar e despachar.
+Guarda os eventos em memória. As fontes, que são os drones e a triagem, publicam
+eventos que se acumulam aqui. O centro de comando lê o quadro para planejar e despachar.
 
-Unifica as duas fontes num único conjunto de DEMANDAS priorizadas:
-  - enchentes detectadas pelos drones  (prioridade = severidade)
-  - pedidos de vítimas da triagem       (prioridade = urgência)
-
-O Planejador aloca os recursos sobre essas demandas (de forma determinística,
-respeitando o estoque) e o LLM narra o plano; o Navegador despacha as missões.
+O Planejador distribui os recursos sobre as demandas de forma determinística,
+respeitando o estoque, e o LLM narra o plano. O Navegador despacha as missões.
 """
 from __future__ import annotations
 
@@ -24,16 +20,14 @@ from .monitoring_flow import (
     _kickoff, _SEV_RANK, TASKS_CFG,
 )
 
-# Ranking de urgência das vítimas (alinhado ao de severidade das enchentes).
+# Ranking de urgência das vítimas, alinhado ao de severidade das enchentes.
 _URG_RANK = {"critica": 4, "alta": 3, "media": 2, "baixa": 1}
 
 
 class Demanda(BaseModel):
-    """Necessidade de recurso de resgate (vinda de enchente OU de vítima)."""
-
     local: str
-    tipo: str               # "enchente" | "vitima"
-    prioridade: int         # 1..4 (maior = mais urgente)
+    tipo: str               # "enchente" ou "vitima"
+    prioridade: int         # 1 a 4, maior é mais urgente
     rotulo: str             # severidade (alto/medio) ou urgência (critica/alta/...)
     detalhe: str
     prob: float = 0.0
@@ -41,13 +35,13 @@ class Demanda(BaseModel):
 
 
 class QuadroSituacao:
-    """Estado acumulado do centro de comando (em memória)."""
+    """Estado acumulado do centro de comando"""
 
     def __init__(self):
         self.deteccoes: list[dict] = []   # {local, prob, severidade, ts}
         self.vitimas: list[dict] = []     # {relato: RelatoVitima, ts}
 
-    # --- Publicação de eventos (pelas fontes) ---
+    # --- Publicação de eventos pelas fontes ---
     def publicar_deteccao(self, local: str, prob: float, severidade: str):
         self.deteccoes.append({
             "local": local, "prob": prob, "severidade": severidade,
@@ -63,12 +57,12 @@ class QuadroSituacao:
         self.deteccoes.clear()
         self.vitimas.clear()
 
-    # --- Consumo (pelo centro de comando) ---
+    # --- Consumo pelo centro de comando ---
     def demandas(self) -> list[Demanda]:
-        """Unifica enchentes + vítimas em demandas priorizadas (ordenadas)."""
+        """Unifica enchentes e vítimas em demandas priorizadas e ordenadas."""
         ds: list[Demanda] = []
 
-        # Enchentes: agrega por local (mantém a maior probabilidade); só ocorrências.
+        # Enchentes: agrega por local mantendo a maior probabilidade. Só conta ocorrências.
         por_local: dict[str, dict] = {}
         for d in self.deteccoes:
             cur = por_local.get(d["local"])
@@ -83,7 +77,7 @@ class QuadroSituacao:
                 prob=d["prob"], detalhe=f"enchente {d['severidade']} (prob {d['prob']:.0%})",
             ))
 
-        # Vítimas: ignora urgência baixa (não-emergência, já filtrada na triagem).
+        # Vítimas: ignora urgência baixa, que não é emergência e já foi filtrada na triagem.
         for v in self.vitimas:
             r: RelatoVitima = v["relato"]
             rank = _URG_RANK.get(r.urgencia, 2)
@@ -94,8 +88,9 @@ class QuadroSituacao:
                 pessoas=r.pessoas, detalhe=f"{r.pessoas} pessoa(s) - {r.necessidade}",
             ))
 
-        # Ordena por prioridade; no empate, VÍTIMA vem antes de enchente
-        # (vidas em risco direto > área alagada), depois por nº de pessoas / prob.
+        # Ordena por prioridade. No empate, a vítima vem antes da enchente,
+        # porque vida em risco direto pesa mais que área alagada, e depois por
+        # número de pessoas e probabilidade.
         ds.sort(
             key=lambda x: (x.prioridade, 1 if x.tipo == "vitima" else 0, x.pessoas, x.prob),
             reverse=True,
@@ -103,12 +98,12 @@ class QuadroSituacao:
         return ds
 
 
-# Instância única (singleton) usada pela interface.
+# Instância única usada pela interface.
 QUADRO = QuadroSituacao()
 
 
 # --------------------------------------------------------------------------- #
-# Frota: unidades de resgate COM ESTADO (consumo + missões ativas)
+# Frota: unidades de resgate com estado, ou seja, estoque e missões ativas
 # --------------------------------------------------------------------------- #
 class MissaoAtiva(BaseModel):
     id: str
@@ -118,11 +113,11 @@ class MissaoAtiva(BaseModel):
     prioridade: int
     detalhe: str = ""
     ts: str
-    briefing: str = ""          # ordem tática (gerada pelo Navegador, sob demanda)
+    briefing: str = ""          # ordem tática gerada pelo Navegador sob demanda
 
 
 class Frota:
-    """Estado das unidades: total por tipo + missões ativas (unidades ocupadas)."""
+    """Estado das unidades: total por tipo e missões ativas."""
 
     def __init__(self):
         self.total: dict[str, int] = {}
@@ -171,22 +166,26 @@ FROTA = Frota()
 
 
 def briefing_da_missao(m: MissaoAtiva, agent=None) -> str:
-    """Agente Navegador: redige a ordem tática (briefing) para a unidade da missão."""
+    """Agente Navegador: redige a ordem tática para a unidade da missão."""
     prompt = TASKS_CFG["briefing_missao"]["description"].format(
         recurso=m.recurso, local=m.local, tipo=m.tipo,
         prioridade=m.prioridade, detalhe=m.detalhe,
     )
     agent = agent or _build_navegador_agent()
+    ordem_regras = (f"Ordem (regras): {m.recurso}, dirija-se a {m.local} "
+                    f"({m.tipo}, prioridade {m.prioridade}). {m.detalhe}.")
     try:
-        return _kickoff(agent, prompt).raw.strip()
+        ordem = _kickoff(agent, prompt).raw.strip()
+        # Modelos pequenos às vezes devolvem só uma saudação, tipo "Vamos lá!".
+        # Se a ordem vier curta demais para ser útil, usa a versão por regras.
+        return ordem if len(ordem) >= 25 else ordem_regras
     except Exception as e:
-        print(f"  (LLM indisponível para o navegador: {e}; ordem por regras)")
-        return (f"Ordem (regras): {m.recurso}, dirija-se a {m.local} "
-                f"({m.tipo}, prioridade {m.prioridade}). {m.detalhe}.")
+        print(f"  (LLM indisponível para o navegador: {e}, ordem por regras)")
+        return ordem_regras
 
 
 def frota_md(frota: Frota = FROTA) -> str:
-    """Painel de monitoramento: unidades livres/ocupadas + missões ativas."""
+    """Painel de monitoramento com unidades livres e ocupadas e as missões ativas."""
     if not frota.total:
         return "_Frota ainda não definida. Clique em **Planejar e despachar**._"
     oc = frota.ocupados()
@@ -209,9 +208,9 @@ def frota_md(frota: Frota = FROTA) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Alocação determinística sobre as demandas (respeita o estoque)
+# Alocação determinística sobre as demandas, respeitando o estoque
 # --------------------------------------------------------------------------- #
-# Preferência de recurso por tipo de demanda (cai para qualquer disponível).
+# Preferência de recurso por tipo de demanda. Se não houver, usa qualquer disponível.
 _PREF_RECURSO = {
     "vitima": ["Helicóptero", "Bote", "Equipe terrestre"],
     "enchente": ["Bote", "Equipe terrestre", "Helicóptero"],
@@ -222,7 +221,7 @@ def _alocar_demandas(demandas: list[Demanda], recursos: list[dict]):
     disp = {r["tipo"]: int(r["qtd"]) for r in recursos}
     aloc = []
     for d in demandas:                       # já ordenadas por prioridade
-        n = 2 if d.prioridade >= 3 else 1    # alta/crítica/alto -> 2; média/medio -> 1
+        n = 2 if d.prioridade >= 3 else 1    # alta, crítica ou alto recebem 2. média ou medio recebem 1
         pref = _PREF_RECURSO.get(d.tipo, [])
         ordem = pref + [t for t in disp if t not in pref]
         atribuidos = []
@@ -237,19 +236,19 @@ def _alocar_demandas(demandas: list[Demanda], recursos: list[dict]):
 
 
 def despachar_alocacao(aloc, frota: Frota = FROTA):
-    """Cria as missões ativas a partir de uma alocação JÁ CALCULADA (consome a frota)."""
+    """Cria as missões ativas a partir de uma alocação já calculada e consome a frota."""
     for d, recs in aloc:
         for recurso in recs:
             frota.adicionar(recurso, d)
 
 
 def _texto_alocacao(aloc) -> str:
-    """Descreve, em texto, a alocação determinística (recurso -> destino)."""
+    """Descreve em texto a alocação determinística, no formato recurso para destino."""
     linhas = []
     for d, recs in aloc:
         if recs:
             linhas.append(f"- {', '.join(recs)} -> {d.local} "
-                          f"({d.tipo}, prioridade {d.prioridade}; {d.detalhe})")
+                          f"({d.tipo}, prioridade {d.prioridade}, {d.detalhe})")
         else:
             linhas.append(f"- {d.local} ({d.tipo}, prioridade {d.prioridade}): "
                           f"SEM RECURSO DISPONÍVEL")
@@ -260,15 +259,15 @@ def _plano_regras_aloc(aloc) -> str:
     falta = any(not recs for _, recs in aloc)
     obs = ("Faltam recursos para atender todas as demandas." if falta
            else "Recursos suficientes para a demanda atual.")
-    return "PLANO DE ALOCAÇÃO (regras):\n" + _texto_alocacao(aloc) + f"\nObs.: {obs}"
+    return "Plano de alocação (regras):\n" + _texto_alocacao(aloc) + f"\nObs.: {obs}"
 
 
 # --------------------------------------------------------------------------- #
-# Planejador (LLM): JUSTIFICA a alocação determinística (não re-decide)
+# Planejador (LLM): justifica a alocação determinística, sem re-decidir
 # --------------------------------------------------------------------------- #
 def planejar_demandas(aloc, agent=None) -> str:
     if not aloc:
-        return "Quadro sem ocorrências/vítimas ativas — nenhuma alocação necessária."
+        return "Quadro sem ocorrências ou vítimas ativas, nenhuma alocação necessária."
     prompt = TASKS_CFG["planejar_demandas"]["description"].format(
         alocacao=_texto_alocacao(aloc),
     )
@@ -276,17 +275,17 @@ def planejar_demandas(aloc, agent=None) -> str:
     try:
         return _kickoff(agent, prompt).raw.strip()
     except Exception as e:
-        print(f"  (LLM indisponível para o planejador: {e}; usando regras)")
+        print(f"  (LLM indisponível para o planejador: {e}, usando regras)")
         return _plano_regras_aloc(aloc)
 
 
 # --------------------------------------------------------------------------- #
-# Monitoramento: BRIEFING agregado da situação (1 chamada de LLM, sob demanda)
+# Monitoramento: resumo agregado da situação, uma chamada de LLM sob demanda
 # --------------------------------------------------------------------------- #
 def _briefing_regras(demandas: list[Demanda]) -> str:
     n_ench = sum(1 for d in demandas if d.tipo == "enchente")
     n_vit = sum(1 for d in demandas if d.tipo == "vitima")
-    linhas = [f"BRIEFING (regras): {len(demandas)} demanda(s) ativa(s) — "
+    linhas = [f"Resumo (regras): {len(demandas)} demanda(s) ativa(s). "
               f"{n_ench} enchente(s), {n_vit} vítima(s)."]
     for d in demandas[:3]:
         linhas.append(f"- Prioridade {d.prioridade}: [{d.tipo}] {d.local} ({d.detalhe}).")
@@ -294,12 +293,11 @@ def _briefing_regras(demandas: list[Demanda]) -> str:
 
 
 def gerar_briefing(demandas: list[Demanda], agent=None) -> str:
-    """Agente de Monitoramento (coordenador_emergencia): redige UM briefing de
-    situação agregado do quadro. Gatilho: sob demanda (não por evento)."""
+    """Agente de Monitoramento: redige um resumo da situação agregado do quadro, sob demanda."""
     if not demandas:
-        return "Quadro sem ocorrências/vítimas ativas — nada a reportar."
+        return "Quadro sem ocorrências ou vítimas ativas, nada a reportar."
     situacao = "\n".join(
-        f"  [{d.tipo}] {d.local} (prioridade {d.prioridade}; {d.detalhe})"
+        f"  [{d.tipo}] {d.local} (prioridade {d.prioridade}, {d.detalhe})"
         for d in demandas
     )
     prompt = TASKS_CFG["briefing_situacao"]["description"].format(situacao=situacao)
@@ -307,7 +305,7 @@ def gerar_briefing(demandas: list[Demanda], agent=None) -> str:
     try:
         return _kickoff(agent, prompt).raw.strip()
     except Exception as e:
-        print(f"  (LLM indisponível para o briefing: {e}; usando regras)")
+        print(f"  (LLM indisponível para o monitoramento: {e}, usando regras)")
         return _briefing_regras(demandas)
 
 
@@ -329,5 +327,5 @@ def resumo_md(quadro: QuadroSituacao = QUADRO) -> str:
     for d in ds:
         linhas.append(f"| {d.prioridade} | {d.tipo} | {d.local} | {d.detalhe} |")
     if not ds:
-        linhas.append("| — | — | _nenhuma demanda ativa_ | — |")
+        linhas.append("| - | - | _nenhuma demanda ativa_ | - |")
     return "\n".join(linhas)

@@ -1,8 +1,8 @@
 """Camada de visão do agente de monitoramento.
 
-Encapsula o modelo MobileNetV2 treinado (Parte 1) e expõe uma função simples
-de classificação de enchente a partir de um arquivo de imagem. É independente
-do CrewAI para poder ser testada isoladamente.
+Carrega o modelo MobileNetV2 treinado na Parte 1 e oferece uma função simples
+para classificar enchente a partir de um arquivo de imagem. Não depende do
+CrewAI, então dá para testar sozinho.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import keras
 
 from .settings import THRESHOLD
 
-# Caminho do modelo salvo pelo notebook (Parte 1).
+# Caminho do modelo salvo pelo notebook da Parte 1.
 MODEL_PATH = os.environ.get(
     "FLOOD_MODEL_PATH",
     os.path.join(os.path.dirname(os.path.dirname(__file__)), "flood_mobilenetv2.keras"),
@@ -29,9 +29,9 @@ class FloodResult:
     """Resultado da classificação de uma imagem."""
 
     image_path: str
-    probability: float          # probabilidade de enchente [0, 1]
-    flooded: bool               # decisão (probabilidade >= threshold)
-    severity: str               # 'baixo' | 'medio' | 'alto'
+    probability: float          # probabilidade de enchente, de 0 a 1
+    flooded: bool               # decisão, probabilidade acima do threshold
+    severity: str               # 'baixo', 'medio' ou 'alto'
 
     def as_dict(self) -> dict:
         return {
@@ -44,7 +44,7 @@ class FloodResult:
 
 @lru_cache(maxsize=1)
 def _load_model() -> keras.Model:
-    """Carrega o modelo uma única vez (cacheado)."""
+    """Carrega o modelo uma única vez e guarda em cache."""
     if not os.path.exists(MODEL_PATH):
         raise FileNotFoundError(
             f"Modelo não encontrado em {MODEL_PATH}. "
@@ -65,12 +65,12 @@ def _load_image(path: str) -> tf.Tensor:
     img = tf.io.read_file(path)
     img = tf.image.decode_image(img, channels=3, expand_animations=False)
     img = tf.image.resize(img, IMAGE_SIZE)
-    img = tf.cast(img, tf.float32)          # [0, 255]; normalização está dentro do modelo
+    img = tf.cast(img, tf.float32)          # escala [0, 255], a normalização fica dentro do modelo
     return tf.expand_dims(img, 0)
 
 
 def classify_image(image_path: str, threshold: float = THRESHOLD) -> FloodResult:
-    """Classifica uma imagem; retorna probabilidade, decisão e severidade."""
+    """Classifica uma imagem e retorna probabilidade, decisão e severidade."""
     model = _load_model()
     x = _load_image(image_path)
     prob = float(model.predict(x, verbose=0).ravel()[0])
@@ -83,7 +83,7 @@ def classify_image(image_path: str, threshold: float = THRESHOLD) -> FloodResult
 
 
 def classify_folder(folder: str, threshold: float = THRESHOLD) -> list[FloodResult]:
-    """Classifica todas as imagens de uma pasta (simula uma 'estação')."""
+    """Classifica todas as imagens de uma pasta, simulando uma estação."""
     exts = (".png", ".jpg", ".jpeg")
     results = []
     for name in sorted(os.listdir(folder)):

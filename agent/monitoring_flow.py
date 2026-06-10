@@ -1,15 +1,10 @@
-"""Núcleo dos agentes de monitoramento de enchentes (CrewAI).
+"""Núcleo dos agentes do centro de comando, feitos com CrewAI.
 
-Constrói o LLM (configurável em runtime) e os agentes do centro de comando, e
-expõe a agregação das detecções por estação e a triagem de mensagens de vítimas.
+Na borda, o drone roda a CNN MobileNetV2 do vision.py, detecta enchente e emite
+um evento. Não há LLM nessa parte. No centro de comando ficam os agentes de LLM
+de Monitoramento, Triagem, Planejador e Navegador, acionados por evento.
 
-Arquitetura borda × centro de comando:
-  - BORDA (drone/sensor): a CNN MobileNetV2 (agent/vision.py) detecta enchente na
-    ponta e emite eventos. Não há LLM na borda.
-  - CENTRO DE COMANDO: os agentes LLM (Monitoramento, Triagem, Planejador,
-    Navegador) são acionados por evento e de forma agregada.
-
-Consumido pela interface web (app.py) e pelo quadro de situação (agent/situation.py).
+Usado pela interface web app.py e pelo quadro de situação situation.py.
 """
 from __future__ import annotations
 
@@ -26,10 +21,10 @@ from .settings import (
 )
 from .vision import FloodResult
 
-# Ranking de severidade (compartilhado com o quadro de situação).
+# Ranking de severidade, usado também pelo quadro de situação.
 _SEV_RANK = {"alto": 3, "medio": 2, "baixo": 1, "normal": 0}
 
-# Config dos agentes e tarefas no padrão CrewAI (separa config de código).
+# Config dos agentes e das tarefas, separada do código.
 _CONFIG_DIR = os.path.join(os.path.dirname(__file__), "config")
 
 
@@ -51,7 +46,7 @@ class StationReport(BaseModel):
     flooded_count: int = 0
     max_prob: float = 0.0
     mean_prob: float = 0.0
-    severity: str = "normal"          # normal | baixo | medio | alto
+    severity: str = "normal"
     detections: list[dict] = Field(default_factory=list)
 
 
@@ -61,7 +56,7 @@ class RelatoVitima(BaseModel):
     local: str = "não informado"
     pessoas: int = 0
     necessidade: str = "não informado"
-    urgencia: str = "media"            # baixa | media | alta | critica
+    urgencia: str = "media"
     resumo: str = ""
 
 
@@ -96,10 +91,10 @@ def _build_report(station: str, results: list[FloodResult]) -> StationReport:
 
 
 def build_recursos(**kwargs: int) -> list[dict]:
-    """Constrói a lista de recursos a partir de quantidades nomeadas.
+    """Monta a lista de recursos a partir de quantidades nomeadas.
 
-    Ex.: build_recursos(Helicóptero=1, Bote=2, Equipe_terrestre=3). Tipos com
-    quantidade 0 são omitidos. Usado pela UI para o operador definir o estoque.
+    Por exemplo, build_recursos(Helicóptero=1, Bote=2, Equipe_terrestre=3). Tipos
+    com quantidade 0 são omitidos. A interface usa isso para o operador definir o estoque.
     """
     return [
         {"tipo": tipo.replace("_", " "), "qtd": int(qtd)}
@@ -108,25 +103,25 @@ def build_recursos(**kwargs: int) -> list[dict]:
 
 
 # --------------------------------------------------------------------------- #
-# LLM (servidor + modelo) — configurável em runtime (ex.: pela interface)
+# LLM (servidor e modelo), configurável em runtime pela interface
 # --------------------------------------------------------------------------- #
 def make_llm(
     model: str | None = None, base_url: str | None = None,
     provider: str | None = None, api_key: str | None = None,
 ) -> LLM:
-    """Constrói o LLM. Sem argumentos, usa os defaults de agent/settings.py.
+    """Monta o LLM. Sem argumentos, usa os padrões de settings.py.
 
-    `provider` é o prefixo do LiteLLM (ollama, openai, anthropic, ...); o servidor
-    não precisa ser Ollama. `base_url` e `api_key` são opcionais: se vazios, usa-se
-    o endpoint padrão do provedor e a key do ambiente (ex.: OPENAI_API_KEY).
+    O provider é o prefixo do LiteLLM, como ollama, openai ou anthropic, e o
+    servidor não precisa ser Ollama. base_url e api_key são opcionais. Se ficarem
+    vazios, usa o endpoint padrão do provedor e a chave do ambiente.
     """
-    # base_url=None -> usa o default do config; base_url="" -> endpoint padrão do provedor.
+    # base_url=None usa o default do config. base_url vazio usa o endpoint padrão do provedor.
     if base_url is None:
         base_url = OLLAMA_BASE_URL
     kwargs: dict = {
         "model": f"{provider or LLM_PROVIDER}/{model or OLLAMA_MODEL}",
-        "temperature": LLM_TEMPERATURE,   # baixa: reduz invenção/embelezamento
-        "timeout": LLM_TIMEOUT,           # evita travar a UI se o servidor não responder
+        "temperature": LLM_TEMPERATURE,   # baixa para o modelo não inventar
+        "timeout": LLM_TIMEOUT,           # evita travar a interface se o servidor não responder
     }
     if base_url:
         kwargs["base_url"] = base_url
@@ -136,14 +131,14 @@ def make_llm(
 
 
 def listar_modelos(base_url: str | None = None) -> list[str]:
-    """Lista modelos via API do Ollama (/api/tags). Vazio se inacessível ou se o
-    servidor não for Ollama (nesse caso digite o nome do modelo manualmente)."""
+    """Lista os modelos pela API do Ollama. Retorna vazio se o servidor não
+    responder ou não for Ollama. Nesse caso, digite o nome do modelo na mão."""
     import requests
     url = (base_url or OLLAMA_BASE_URL).rstrip("/") + "/api/tags"
     try:
         r = requests.get(url, timeout=5)
         r.raise_for_status()
-        # O Ollama retorna nomes com ':latest'; removemos para casar com o default.
+        # O Ollama devolve nomes com ':latest'. Tiramos isso para casar com o default.
         return sorted(m["name"].removesuffix(":latest") for m in r.json().get("models", []))
     except Exception:
         return []
@@ -166,7 +161,7 @@ def _build_agent(cfg_key: str, llm: LLM | str | None = None) -> Agent:
 
 
 def _build_alert_agent(llm: LLM | str | None = None) -> Agent:
-    """Monitoramento: redige o briefing/SITREP da situação."""
+    """Monitoramento: redige o resumo da situação."""
     return _build_agent("coordenador_emergencia", llm)
 
 
@@ -186,8 +181,8 @@ def _build_navegador_agent(llm: LLM | str | None = None) -> Agent:
 
 
 def _kickoff(agent: Agent, *args, **kwargs):
-    """Executa agent.kickoff; com event loop ativo (ex.: notebook) ele devolve uma
-    coroutine, então a resolvemos para o resultado."""
+    """Executa agent.kickoff. Quando há um event loop ativo, como no notebook, ele
+    devolve uma coroutine, então resolvemos para o resultado."""
     out = agent.kickoff(*args, **kwargs)
     if not asyncio.iscoroutine(out):
         return out
